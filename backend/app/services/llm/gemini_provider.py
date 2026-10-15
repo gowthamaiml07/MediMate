@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Tuple, AsyncIterator
 import httpx
 from pydantic import ValidationError
 from app.schemas.prescription import (
@@ -141,3 +141,106 @@ class GeminiLLMProvider(BaseLLMProvider):
                 raise RuntimeError(f"Gemini LLM extraction failed: {str(e)}")
 
         raise RuntimeError(f"Failed to extract structured medication payload after retries: {str(last_error)}")
+
+    async def generate_chat_reply(
+        self,
+        messages: List[Dict[str, str]],
+        system_instruction: str,
+        patient_context: str
+    ) -> Tuple[str, str, bool]:
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is not configured.")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        
+        # Build contents array
+        gemini_contents = []
+        for m in messages:
+            role = "user" if m.get("role") in ("user", "system") else "model"
+            gemini_contents.append({
+                "role": role,
+                "parts": [{"text": m.get("content", "")}]
+            })
+
+        # Prepend patient context to system instruction
+        full_system = f"{system_instruction}\n\n[CONFIRMED PATIENT HEALTH CONTEXT]:\n{patient_context}"
+
+        payload = {
+            "system_instruction": {
+                "parts": [{"text": full_system}]
+            },
+            "contents": gemini_contents,
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 1024
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload)
+
+        if response.status_code == 429:
+            raise RuntimeError("Gemini API rate limit exceeded.")
+        if response.status_code != 200:
+            raise RuntimeError(f"Gemini API returned HTTP {response.status_code}: {response.text}")
+
+        data = response.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise RuntimeError("Gemini returned empty candidate choices.")
+
+        reply_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        return reply_text.strip(), self.model, False
+
+    async def stream_chat_reply(
+        self,
+        messages: List[Dict[str, str]],
+        system_instruction: str,
+        patient_context: str
+    ) -> AsyncIterator[str]:
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is not configured.")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?alt=sse&key={self.api_key}"
+        
+        gemini_contents = []
+        for m in messages:
+            role = "user" if m.get("role") in ("user", "system") else "model"
+            gemini_contents.append({
+                "role": role,
+                "parts": [{"text": m.get("content", "")}]
+            })
+
+        full_system = f"{system_instruction}\n\n[CONFIRMED PATIENT HEALTH CONTEXT]:\n{patient_context}"
+        payload = {
+            "system_instruction": {
+                "parts": [{"text": full_system}]
+            },
+            "contents": gemini_contents,
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 1024
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            async with client.stream("POST", url, json=payload) as response:
+                if response.status_code != 200:
+                    err_body = await response.aread()
+                    raise RuntimeError(f"Gemini streaming failed HTTP {response.status_code}: {err_body.decode()}")
+
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if not data_str or data_str == "[DONE]":
+                            continue
+                        try:
+                            parsed = json.loads(data_str)
+                            cands = parsed.get("candidates", [])
+                            if cands:
+                                text_piece = cands[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                                if text_piece:
+                                    yield text_piece
+                        except Exception:
+                            continue
+

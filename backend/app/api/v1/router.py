@@ -17,4 +17,6 @@ api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["
 api_router.include_router(medications.router, prefix="/medications", tags=["Medications"])
 api_router.include_router(appointments.router, prefix="/appointments", tags=["Appointments"])
 api_router.include_router(ai_chat.router, prefix="/ai", tags=["AI Assistant"])
+api_router.include_router(ai_chat.router, prefix="/assistant", tags=["AI Assistant"])
 api_router.include_router(doctor_summary.router, prefix="/doctor", tags=["Doctor Summary"])
+

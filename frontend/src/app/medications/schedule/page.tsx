@@ -43,7 +43,7 @@ export default function MedicationSchedulePage() {
   const [configFrequency, setConfigFrequency] = useState("Twice daily");
   const [configTimes, setConfigTimes] = useState<string[]>(["08:00", "20:00"]);
   const [configTimingRelation, setConfigTimingRelation] = useState("After food");
-  const [configStartDate, setConfigStartDate] = useState(new Date().toISOString().split("T")[0]);
+  const [configStartDate, setConfigStartDate] = useState("2025-09-08");
   const [configDuration, setConfigDuration] = useState("30 days");
   const [configTimezone, setConfigTimezone] = useState(() => {
     try {

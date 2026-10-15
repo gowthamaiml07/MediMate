@@ -151,4 +151,57 @@ class ReminderService:
         jobs.sort(key=lambda x: x.reminder_time)
         return jobs
 
+    def schedule_appointment_reminder(
+        self,
+        user_id: str,
+        appointment_id: str,
+        doctor_name: str,
+        appointment_time: str,
+        reminder_time: str,
+        offset_minutes: int = 60,
+        channel: str = "push"
+    ) -> ReminderRecord:
+        try:
+            if isinstance(reminder_time, str):
+                rem_dt = datetime.fromisoformat(reminder_time.replace("Z", "+00:00"))
+            else:
+                rem_dt = reminder_time
+        except Exception:
+            rem_dt = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+        for job in self._jobs.values():
+            if (
+                job.schedule_id == f"apt-{appointment_id}"
+                and job.reminder_time == rem_dt
+                and job.status != "cancelled"
+            ):
+                return job
+
+        job_id = f"rem-apt-{uuid.uuid4().hex[:8]}"
+        record = ReminderRecord(
+            id=job_id,
+            user_id=user_id,
+            medication_id=appointment_id,
+            medication_name=f"Visit: {doctor_name}",
+            strength=f"{offset_minutes}m before",
+            schedule_id=f"apt-{appointment_id}",
+            scheduled_for=rem_dt + timedelta(minutes=offset_minutes),
+            reminder_time=rem_dt,
+            channel=channel,
+            status="pending",
+            is_mock=True
+        )
+        self._jobs[job_id] = record
+        return record
+
+    def cancel_appointment_reminders(self, appointment_id: str) -> int:
+        cancelled = 0
+        target_sched_id = f"apt-{appointment_id}"
+        for job in self._jobs.values():
+            if (job.schedule_id == target_sched_id or job.medication_id == appointment_id) and job.status == "pending":
+                job.status = "cancelled"
+                cancelled += 1
+        return cancelled
+
 reminder_service = ReminderService()
+

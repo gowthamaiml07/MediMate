@@ -1,5 +1,6 @@
 import uuid
-from typing import List
+import asyncio
+from typing import List, Dict, Tuple, AsyncIterator
 from app.schemas.prescription import (
     ExtractedPrescriptionPayload,
     ExtractedMedicationItem,
@@ -437,3 +438,145 @@ class MockLLMProvider(BaseLLMProvider):
             ],
             raw_ocr_text=ocr_text
         )
+
+    def _synthesize_mock_reply(self, query: str, patient_context: str) -> str:
+        q = (query or "").lower().strip()
+        ctx_lower = (patient_context or "").lower()
+
+        # 1. Suggested prompt: "Help me understand my prescription instructions"
+        if "understand my prescription" in q or "prescription instructions" in q:
+            return (
+                "Here is an overview of how to understand your prescription instructions:\n\n"
+                "• **Medication Name & Strength:** Identifies the active therapeutic drug and the exact amount per unit (e.g. 500mg).\n"
+                "• **Frequency & Timing:** 'BID' means twice daily, 'OD' means once daily, and 'Weekly' means once a week. 'p.c.' means post cibum (after meals).\n"
+                "• **Route & Formulation:** Usually oral tablets or capsules taken with a full glass of water.\n\n"
+                "**Your Active Prescriptions Breakdown:**\n"
+                "1. **Metformin 500mg:** Take 1 tablet twice daily (08:00 AM & 01:00 PM) after meals with water.\n"
+                "2. **Atorvastatin 10mg:** Take 1 tablet once daily at night (10:00 PM). Avoid grapefruit.\n"
+                "3. **Vitamin D3 1000IU:** Take 1 capsule weekly with breakfast.\n\n"
+                "Always check your confirmed medication list and consult your doctor if any instruction appears unclear."
+            )
+
+        # 2. Suggested prompt: "What does this medicine information mean?"
+        if "what does this medicine information mean" in q or "medicine information mean" in q or "interpret medicine" in q:
+            return (
+                "Medicine information provides essential clinical guidance about how a drug works, proper administration, and safe usage:\n\n"
+                "• **Active Ingredient:** The chemical compound that produces the therapeutic benefit (e.g., Metformin for glycemic control).\n"
+                "• **Indications:** The specific medical conditions the drug is prescribed to manage.\n"
+                "• **Timing Relation:** Indicates whether to take the medicine before food (a.c.), after food (p.c.), or at bedtime (h.s.) to optimize absorption or prevent stomach upset.\n"
+                "• **Common Side Effects:** Expected, mild physiological reactions (such as temporary nausea or dry cough) that usually resolve as your body adapts.\n\n"
+                "You can inspect verified monographs for each of your medications directly in MediMate."
+            )
+
+        # 3. Suggested prompt: "Show my upcoming appointments"
+        if "upcoming appointment" in q or "show my appointment" in q or "when is my next appointment" in q:
+            if "upcoming scheduled appointments" in ctx_lower and "no upcoming appointments" not in ctx_lower:
+                return (
+                    "**Your Upcoming Scheduled Appointments:**\n\n"
+                    "• **Dr. S. Kumar** (Endocrinologist & Diabetologist)\n"
+                    "  Date & Time: **12 Sep 2025 at 10:30 AM**\n"
+                    "  Location: Apollo Clinic, Sector 7 [In-Person]\n\n"
+                    "You can generate a Doctor Visit Summary from your navigation menu to take along your active medication list and adherence records."
+                )
+            else:
+                return (
+                    "You currently do not have any upcoming appointments scheduled in your MediMate calendar. "
+                    "You can schedule a new doctor consultation anytime from the Appointments page."
+                )
+
+        # 4. Suggested prompt: "Help me prepare questions for my doctor"
+        if "prepare questions" in q or "questions for my doctor" in q:
+            return (
+                "Here are recommended questions to ask your doctor during your upcoming visit:\n\n"
+                "1. **Treatment Goals:** 'Are my current blood sugar and cholesterol levels within target ranges on my current regimen?'\n"
+                "2. **Side Effect Management:** 'Are the mild digestive symptoms I occasionally experience expected, and how can I minimize them?'\n"
+                "3. **Duration & Refills:** 'How long will I continue this current dosage before we recheck lab work?'\n"
+                "4. **Interactions:** 'Are there any over-the-counter supplements or pain relievers I should avoid with my current prescriptions?'\n"
+                "5. **Lifestyle Alignment:** 'What specific dietary or activity adjustments would best complement my medication plan?'\n\n"
+                "Tip: You can print or download your Doctor Summary report from MediMate to share with your physician."
+            )
+
+        # 5. Suggested prompt: "Explain how medication reminders work"
+        if "medication reminders work" in q or "how do reminders work" in q:
+            return (
+                "**How MediMate Medication Reminders Work:**\n\n"
+                "1. **Configured Timings:** Reminders are automatically scheduled based on your confirmed prescription frequencies (e.g. 08:00 AM and 01:00 PM for Metformin).\n"
+                "2. **Advance Notifications:** You receive an alert 10 minutes prior to your scheduled dose time, including food relation guidance (e.g., 'Take after food with water').\n"
+                "3. **One-Tap Logging:** When taking your medication, tap **Take Dose** to log adherence in real time. If needed, you can record a dose as 'Skipped' with an optional note.\n"
+                "4. **Adherence Analytics:** MediMate records your dose history to calculate your 7-day adherence rate, helping you and your healthcare team evaluate treatment consistency."
+            )
+
+        # 6. Specific drug queries
+        if "metformin" in q:
+            return (
+                "**Metformin (Oral Biguanide Antidiabetic)**\n\n"
+                "• **Purpose:** Helps regulate blood glucose levels by decreasing liver sugar production and improving insulin response.\n"
+                "• **How to Take:** Take with or right after meals with water to avoid stomach upset.\n"
+                "• **Common Side Effects:** Temporary nausea, diarrhea, or mild stomach discomfort when starting or adjusting doses.\n"
+                "• **Important:** Do not drink excessive alcohol while on Metformin."
+            )
+
+        if "atorvastatin" in q:
+            return (
+                "**Atorvastatin (Statin Cholesterol Regulator)**\n\n"
+                "• **Purpose:** Lowers low-density lipoprotein (LDL) cholesterol and protects cardiovascular health.\n"
+                "• **How to Take:** Usually taken once daily at bedtime.\n"
+                "• **Precaution:** Avoid excessive grapefruit juice, which can raise medicine concentrations in your bloodstream.\n"
+                "• **Doctor Alert:** Contact your doctor if you experience unexplained muscle aches or fatigue."
+            )
+
+        if "vitamin d3" in q or "vitamin" in q:
+            return (
+                "**Vitamin D3 / Cholecalciferol (1000 IU)**\n\n"
+                "• **Purpose:** Supports calcium absorption, bone mineralization, and immune defense.\n"
+                "• **How to Take:** Take once weekly with a meal containing dietary healthy fats (like breakfast or lunch) for optimal absorption.\n"
+                "• **Side Effects:** Very well tolerated at standard prescribed doses."
+            )
+
+        # 7. General fallback
+        return (
+            f"Regarding your query: '{query}'\n\n"
+            "Based on your confirmed health record, your current active medications include Metformin 500mg BID, "
+            "Atorvastatin 10mg OD, and Vitamin D3 1000IU weekly. "
+            "Please ensure you follow your prescribed mealtime schedule. If you have questions about changing your medication "
+            "or are experiencing new symptoms, please consult your prescribing clinician."
+        )
+
+    async def generate_chat_reply(
+        self,
+        messages: List[Dict[str, str]],
+        system_instruction: str,
+        patient_context: str
+    ) -> Tuple[str, str, bool]:
+        """
+        Generates deterministic, context-aware healthcare reply in local mock mode.
+        Discloses mock status transparently (is_mock=True).
+        """
+        last_user_query = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_user_query = m.get("content", "")
+                break
+
+        reply = self._synthesize_mock_reply(last_user_query, patient_context)
+        return reply, self.model_name, True
+
+    async def stream_chat_reply(
+        self,
+        messages: List[Dict[str, str]],
+        system_instruction: str,
+        patient_context: str
+    ) -> AsyncIterator[str]:
+        """
+        Streams conversational reply in simulated chunks for realistic SSE streaming testing.
+        """
+        reply, _, _ = await self.generate_chat_reply(messages, system_instruction, patient_context)
+        
+        # Split into readable word chunks of 3-5 words
+        words = reply.split(" ")
+        chunk_size = 4
+        for i in range(0, len(words), chunk_size):
+            chunk = " ".join(words[i:i + chunk_size]) + " "
+            yield chunk
+            await asyncio.sleep(0.03)
+

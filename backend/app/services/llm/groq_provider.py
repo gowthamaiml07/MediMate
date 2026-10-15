@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Tuple, AsyncIterator
 import httpx
 from pydantic import ValidationError
 from app.schemas.prescription import (
@@ -95,3 +95,97 @@ class GroqLLMProvider(BaseLLMProvider):
                 raise RuntimeError(f"Groq LLM extraction failed: {str(e)}")
 
         raise RuntimeError(f"Failed to extract structured medication payload: {str(last_error)}")
+
+    async def generate_chat_reply(
+        self,
+        messages: List[Dict[str, str]],
+        system_instruction: str,
+        patient_context: str
+    ) -> Tuple[str, str, bool]:
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY is not configured.")
+
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        full_system = f"{system_instruction}\n\n[CONFIRMED PATIENT HEALTH CONTEXT]:\n{patient_context}"
+        chat_messages = [{"role": "system", "content": full_system}]
+        for m in messages:
+            chat_messages.append({"role": m.get("role", "user"), "content": m.get("content", "")})
+
+        payload = {
+            "model": self.model,
+            "messages": chat_messages,
+            "temperature": 0.2,
+            "max_tokens": 1024
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+
+        if response.status_code == 429:
+            raise RuntimeError("Groq rate limit exceeded.")
+        if response.status_code != 200:
+            raise RuntimeError(f"Groq API returned HTTP {response.status_code}: {response.text}")
+
+        data = response.json()
+        choices = data.get("choices", [])
+        if not choices:
+            raise RuntimeError("Groq returned empty completion choices.")
+
+        reply_text = choices[0].get("message", {}).get("content", "")
+        return reply_text.strip(), self.model, False
+
+    async def stream_chat_reply(
+        self,
+        messages: List[Dict[str, str]],
+        system_instruction: str,
+        patient_context: str
+    ) -> AsyncIterator[str]:
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY is not configured.")
+
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        full_system = f"{system_instruction}\n\n[CONFIRMED PATIENT HEALTH CONTEXT]:\n{patient_context}"
+        chat_messages = [{"role": "system", "content": full_system}]
+        for m in messages:
+            chat_messages.append({"role": m.get("role", "user"), "content": m.get("content", "")})
+
+        payload = {
+            "model": self.model,
+            "messages": chat_messages,
+            "temperature": 0.2,
+            "max_tokens": 1024,
+            "stream": True
+        }
+
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                if response.status_code != 200:
+                    err_body = await response.aread()
+                    raise RuntimeError(f"Groq streaming failed HTTP {response.status_code}: {err_body.decode()}")
+
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if not data_str or data_str == "[DONE]":
+                            continue
+                        try:
+                            parsed = json.loads(data_str)
+                            choices = parsed.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                text_piece = delta.get("content", "")
+                                if text_piece:
+                                    yield text_piece
+                        except Exception:
+                            continue
+
